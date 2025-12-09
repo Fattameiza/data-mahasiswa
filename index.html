@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Data Mahasiswa</title>
+
+<!-- Libraries -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+:root{
+  --bg:#f4f6f9; 
+  --card:#ffffff; 
+  --text:#222; 
+  --muted:#666; 
+  --primary:#007bff; 
+  --danger:#dc3545; 
+  --accent:#ffc107;
+}
+[data-theme="dark"]{
+  --bg:#0f1724; 
+  --card:#0b1220; 
+  --text:#e6eef8; 
+  --muted:#9fb3d6; 
+  --primary:#60a5fa; 
+  --danger:#f87171; 
+  --accent:#fbbf24;
+}
+body{
+  font-family: Inter, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  padding: 30px;
+  max-width: 1400px;
+  margin: auto;
+}
+h1{
+  text-align: center;
+  margin-bottom: 20px;
+}
+.card{
+  background: var(--card);
+  padding: 20px;
+  border-radius: 14px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+  margin-bottom: 20px;
+}
+input,button,select{
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #ccc;
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+}
+button{ cursor: pointer }
+.btn-primary{ background: var(--primary); color:white; border:none }
+.btn-edit{ background: var(--accent); border:none }
+.btn-danger{ background: var(--danger); border:none; color:white }
+table{
+  width:100%;
+  border-collapse: collapse;
+  margin-top:12px;
+  font-size:15px;
+}
+th,td{
+  padding:12px;
+  border-bottom:1px solid rgba(0,0,0,0.06);
+}
+th{
+  background: linear-gradient(90deg,rgba(0,0,0,0.05),transparent);
+}
+.controls{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  margin-bottom:20px;
+}
+.chart-grid{
+  display:flex;
+  gap:20px;
+}
+.chart-box{
+  width:480px;
+}
+.stats-box{
+  font-size:15px;
+  color:var(--muted);
+}
+</style>
+</head>
+
+<body data-theme="light">
+<h1>Data Mahasiswa</h1>
+
+<!-- Controls -->
+<div class="controls">
+  <label style="display:flex;align-items:center;gap:6px">
+    <input id="toggleTheme" type="checkbox" /> Dark Mode
+  </label>
+
+  <input id="cari" placeholder="Cari nama..." style="width:240px" />
+
+  <select id="sortBy" style="width:200px">
+    <option value="">Sortir</option>
+    <option value="nama_asc">Nama A → Z</option>
+    <option value="nama_desc">Nama Z → A</option>
+    <option value="nilai_asc">Nilai ↑</option>
+    <option value="nilai_desc">Nilai ↓</option>
+  </select>
+
+  <button id="exportCsv">Export CSV</button>
+  <button id="exportXlsx">Export Excel</button>
+  <button id="exportPdf">Export PDF</button>
+</div>
+
+<!-- Form -->
+<div class="card">
+  <h3>Tambah / Edit Data</h3>
+  <div style="display:flex;gap:12px;align-items:center">
+    <input id="nama" placeholder="Nama" style="flex:1" />
+    <input id="nilai" placeholder="Nilai" type="number" style="width:150px" />
+    <button id="btnTambah" class="btn-primary" style="width:160px">Tambah</button>
+  </div>
+</div>
+
+<!-- Table + Charts -->
+<div class="card chart-grid">
+  <div style="flex:1">
+    <table>
+      <thead>
+        <tr>
+          <th>No</th>
+          <th>Nama</th>
+          <th>Nilai</th>
+          <th>Grade</th>
+          <th>Aksi</th>
+        </tr>
+      </thead>
+      <tbody id="tabel"></tbody>
+    </table>
+  </div>
+
+  <div class="chart-box">
+    <div class="card stats-box">
+      <strong>Statistik Nilai</strong><br><br>
+      Jumlah: <span id="statCount">0</span><br>
+      Rata-rata: <span id="statAvg">-</span><br>
+      Max: <span id="statMax">-</span><br>
+      Min: <span id="statMin">-</span>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <canvas id="chart" height="220"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+let data = JSON.parse(localStorage.getItem('mhs_pc')) || [];
+let editIndex = -1;
+
+const el = id => document.getElementById(id);
+const grade = n => n>=85?'A':n>=70?'B':n>=55?'C':n>=40?'D':'E';
+const save = () => localStorage.setItem('mhs_pc', JSON.stringify(data));
+const escapeHtml = s => s.replaceAll('<','&lt;').replaceAll('>','&gt;');
+
+function filtered(){
+  let list = data.slice();
+  const key = el('cari').value.toLowerCase();
+  const srt = el('sortBy').value;
+
+  if(key) list = list.filter(x => x.nama.toLowerCase().includes(key));
+  if(srt==="nama_asc") list.sort((a,b)=>a.nama.localeCompare(b.nama));
+  if(srt==="nama_desc") list.sort((a,b)=>b.nama.localeCompare(a.nama));
+  if(srt==="nilai_asc") list.sort((a,b)=>a.nilai-b.nilai);
+  if(srt==="nilai_desc") list.sort((a,b)=>b.nilai-a.nilai);
+
+  return list;
+}
+
+function render(){
+  const list = filtered();
+  const tbody = el('tabel');
+
+  tbody.innerHTML = "";
+
+  list.forEach((m,i)=>{
+    tbody.innerHTML += `
+      <tr>
+        <td>${i+1}</td>
+        <td>${escapeHtml(m.nama)}</td>
+        <td>${m.nilai}</td>
+        <td>${grade(m.nilai)}</td>
+        <td>
+          <button class="btn-edit" onclick="edit(${i})">Edit</button>
+          <button class="btn-danger" onclick="hapus(${i})">Hapus</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  stats(list);
+  updateChart(list);
+}
+
+function stats(list){
+  el('statCount').innerText = list.length;
+
+  if(!list.length){
+    el('statAvg').innerText='-';
+    el('statMax').innerText='-';
+    el('statMin').innerText='-';
+    return;
+  }
+  
+  const arr = list.map(x=>x.nilai);
+  el('statAvg').innerText = (arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(2);
+  el('statMax').innerText = Math.max(...arr);
+  el('statMin').innerText = Math.min(...arr);
+}
+
+el('btnTambah').onclick = ()=>{
+  const nama = el('nama').value.trim();
+  const nilai = parseInt(el('nilai').value);
+  if(!nama || isNaN(nilai)) return alert("Isi data dengan benar!");
+
+  if(editIndex === -1) data.push({nama,nilai});
+  else{
+    data[editIndex] = {nama,nilai};
+    editIndex = -1;
+    el('btnTambah').innerText = "Tambah";
+  }
+
+  save();
+  render();
+  el('nama').value = "";
+  el('nilai').value = "";
+};
+
+function edit(i){
+  const item = filtered()[i];
+  const real = data.findIndex(d => d.nama===item.nama && d.nilai===item.nilai);
+  editIndex = real;
+
+  el('nama').value = item.nama;
+  el('nilai').value = item.nilai;
+  el('btnTambah').innerText = "Simpan";
+}
+
+function hapus(i){
+  if(!confirm("Hapus data?")) return;
+
+  const item = filtered()[i];
+  const real = data.findIndex(d => d.nama===item.nama && d.nilai===item.nilai);
+
+  data.splice(real,1);
+  save();
+  render();
+}
+
+el('cari').oninput = render;
+el('sortBy').onchange = render;
+el('toggleTheme').onchange = e =>
+  document.body.setAttribute("data-theme", e.target.checked ? "dark" : "light");
+
+// Export CSV
+el('exportCsv').onclick=()=>{
+  let csv = "No,Nama,Nilai,Grade\n";
+  data.forEach((d,i)=> csv+=`${i+1},${d.nama},${d.nilai},${grade(d.nilai)}\n`);
+  saveAs(new Blob([csv],{type:"text/csv"}),"mahasiswa_pc.csv");
+};
+
+// Export Excel
+el('exportXlsx').onclick=()=>{
+  const rows=[["No","Nama","Nilai","Grade"]];
+  data.forEach((d,i)=>rows.push([i+1,d.nama,d.nilai,grade(d.nilai)]));
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(rows);
+  XLSX.utils.book_append_sheet(wb,ws,"Data");
+  saveAs(new Blob([XLSX.write(wb,{bookType:"xlsx",type:"array"})]),"mahasiswa_pc.xlsx");
+};
+
+// Export PDF
+el('exportPdf').onclick=async()=>{
+  const node=document.querySelector("table");
+  const canvas=await html2canvas(node);
+  const img=canvas.toDataURL("image/png");
+  const {jsPDF}=window.jspdf;
+  const pdf=new jsPDF("l","pt",[canvas.width,canvas.height]);
+  pdf.addImage(img,"PNG",0,0);
+  pdf.save("mahasiswa_pc.pdf");
+};
+
+let chart=null;
+function updateChart(list){
+  const ctx=document.getElementById("chart").getContext("2d");
+  const labels=list.map(x=>x.nama);
+  const values=list.map(x=>x.nilai);
+
+  if(chart) chart.destroy();
+
+  chart=new Chart(ctx,{
+    type:"bar",
+    data:{ labels, datasets:[{label:"Nilai",data:values}] },
+    options:{ scales:{ y:{beginAtZero:true} } }
+  });
+}
+
+render();
+</script>
+
+</body>
+</html>
